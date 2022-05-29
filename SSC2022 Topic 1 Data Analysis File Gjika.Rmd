@@ -1,0 +1,1164 @@
+---
+title: "SSC2022-Competition"
+subtititle: "DEVELOPING A PHYSICIAN PERFORMANCE MODEL IN CRITICAL CARE: ASSESSING QUALITY AND VALUE"
+author: "Eralda Gjika"
+output:
+  word_document: default
+  pdf_document: default
+  html_notebook: default
+---
+
+# Source of information and data: 
+https://ssc.ca/en/case-study/developing-a-physician-performance-model-critical-care-assessing-quality-and-value
+
+
+
+# Information on dataset and variables
+Physician characteristics	"DocID"		Physician ID
+	"M1"		Indicates how many sites is this physician works at
+	"M2"		Does this physician have a leadership role in the department?
+	"M3"		Indicates the rank of a physician (senior/junior)
+	"M4"		Average overall score from survey in 2016
+	"M5"		Resident evaluation ranking group in 2016
+	"M6"		Sex
+	"M7"		In what domain has the physician received training?
+	"M8"		Age >= 50
+	"M9"		Education
+
+Patient Characteristics	"DocID"		Physician ID
+	"PtID"		Patient ID
+	"P1"		Age >= 60
+	"P2"		Was an emergent or rapid response such as an operation needed at admission?
+	"P3"		To which ICU department was the patient admitted?
+	"P4"		Charlson comorbidity scoring group
+	"P5"		APACHE-II score at admission
+	"P6"		SOFA score at admission
+	"P7"		Sex
+	"P8"		Status at ICU discharge
+	"P9"		ICU length of stay
+	"P10"		What was the primary diagnosis?
+SOFA trajectory	"PtID"		Patient ID
+	"day"		Day of ICU stay (limited to 20 days)
+	"SOFA"		SOFA score
+Survey evaluation 	"Q1"	Medical Expert	Functions effectively as a consultant to provide optimal ethical and patient centered medical care
+	"Q2"	Medical Expert	Demonstrates proficient and appropriate use of procedural skills both diagnostic and therapeutic
+	"Q3"	Medical Expert	Follows appropriate infection prevention practices and serves as a role model for others
+	"Q4"	Advocacy	Responds to individual patient health needs and issues as part of patient care
+	"Q5"	Scientific knowledge	Is up to date on current medical knowledge and applies that knowledge in providing patient care and to promote the learning of others
+	"Q6"	Professionalism	Is courteous and respectful in interactions including those that are demanding or stressful
+	"Q7"	Professionalism	Demonstrates honesty and integrity
+	"Q8"	Professionalism	Is approachable and responsive to concerns raised
+	"Q9"	Professionalism	Responds to pages and requests in a prompt manner
+	"Q10"	Communication	Communicates respectfully with other allied health professionals
+	"Q11"	Communication	Provides clear explanations in response to patients and families questions
+	"Q12"	Communication	Listens effectively
+	"Q13"	Communication	Accepts feedback graciously
+	"Q14"	Communication	Provides clear understandable instructions
+	"Q15"	Collaboration	Establishes good relationships with peers and other members of the health care team
+	"Q16"	Collaboration	Works constructively within the health care team to optimize patient care
+	"Q17"	Collaboration	Respects the professional knowledge skills and contributions of other allied health professionals
+	"Q18"	Collaboration	Takes responsibilty for actions without blaming others
+	"Q19"	Management	Demonstrates strong leadership skills
+	"Q20"	Management	Effectively manages the team during acute resuscitation of critically ill patients
+	"Q21"	Management	Conducts daily bedside rounds in an efficient manner while still balancing teaching responsibilities
+	"Q22"	Management	Makes efficient use of their time to optimize professional performance
+	"Q23"	Overall Score	overall score
+	"DocID"		Physician who a participant evaluated
+	"position"		Participant's position
+	
+# Before you start 
+## Multiplot function for ggplot which will be used latter
+(just run it)
+
+```{r}
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+# Importing data
+Import the dataset from a file saved in your computer.
+```{r}
+library(readxl)
+df_doctors_v20220321<-read_excel("SSC 2022-Canada/df_doctors_v20220321.xlsx")
+#View(df_doctors_v20220321)
+
+df_eval360_v20220321 <- read_excel("SSC 2022-Canada/df_eval360_v20220321.xlsx")
+#View(df_eval360_v20220321)
+
+df_patients_v20220321 <- read_excel("SSC 2022-Canada/df_patients_v20220321.xlsx")
+#View(df_patients_v20220321)
+
+df_traj_v20220321 <- read_excel("SSC 2022- Canada/df_traj_v20220321.xlsx")
+#View(df_traj_v20220321)
+```
+
+
+# Random Forest variable importance
+
+# Variable Importance 
+
+Reference:
+https://rpubs.com/minma/cart_with_rpart
+http://www.di.fc.ul.pt/~jpn/r/tree/tree.html
+
+Libraries used:
+```{r}
+library(dplyr)
+library(corrplot)
+library(caret)
+library(glm2)
+library(e1071)
+library(randomForest)
+library(purrr)
+library(tidyr)
+library(vtable)
+library(ROSE)
+library(lmtest)
+library(skimr)
+library(DataExplorer)
+library(forcats)
+library(rpart.plot)
+library(ranger)
+library(mlr)
+library(class)
+library(gmodels)
+# library(binaryLogic)
+
+```
+
+```{r}
+library(rcompanion)
+library(olsrr)
+library(gridExtra)
+library(reshape)
+library(Boruta)
+```
+
+# Missing data information
+
+This are some consideration on which variables should be taken into account when looking at the dataset and target variables related to physician performance.
+```{r}
+plot_missing(df_patients_v20220321,) # this may be used for each of the three dataset
+plot_missing(df_doctors_v20220321,) # this may be used for each of the three dataset
+
+plot_missing(df_eval360_v20220321,) # this may be used for each of the three dataset
+
+```
+M9 and Q20 are not with full info so they may be not considered. 
+
+P3 isTo which ICU department was the patient admitted? and
+M7 is physician training: Emergency, Respiratory, Internal Medicine, Pulmonary, Neurology. 
+
+## Variable importance for M4 in the physician dataset.
+
+```{r}
+boruta_output <- Boruta(M4~., data=df_doctors_v20220321[,-c(1,10)], doTrace=0)  
+boruta_signif <- getSelectedAttributes(boruta_output, withTentative = TRUE)
+print(boruta_signif) 
+```
+
+```{r}
+# Do a tentative rough fix
+roughFixMod <- TentativeRoughFix(boruta_output)
+boruta_signif <- getSelectedAttributes(roughFixMod)
+print(boruta_signif)
+```
+
+```{r}
+# Variable Importance Scores
+imps <- attStats(roughFixMod)
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+head(imps2[order(-imps2$meanImp), ])  # descending sort
+```
+
+```{r}
+# Plot variable importance
+plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  
+```
+# Random Forest
+
+```{r}
+set.seed(0)
+model_rf <- ranger(M4~., data=df_doctors_v20220321[,-c(1,10)], mtry = 2, num.trees = 500, write.forest=TRUE, importance = "permutation")
+```
+
+```{r}
+p1<-data.frame(variables = names(importance(model_rf, method = "janitza")),           feature_importance = importance(model_rf, method = "janitza")) %>%
+  ggplot(aes(x = feature_importance, y = reorder(variables, X = feature_importance))) +
+    geom_bar(stat = "identity",  alpha=0.9, col="darkblue", fill="darkblue") +
+    labs(y = "features", title = "Feature importance") +
+    theme_minimal(base_size = 10)
+p1
+```
+To better understand and consolidate the variable importance we also did some extra graphs.
+
+```{r}
+ggplot(df_doctors_v20220321) +
+  aes(x = DocID, fill = M4, weight = M5) +
+  geom_bar() +
+  scale_fill_viridis_c(option = "viridis", direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+
+```{r}
+ggplot(df_doctors_v20220321) +
+  aes(x = DocID, fill = M5, weight = M4) +
+  geom_bar() +
+  labs(y="M4")+
+  scale_fill_viridis_c(option = "viridis", direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+
+```{r}
+ggplot(df_doctors_v20220321) +
+  aes(x = DocID, fill = M7, weight = M4) +
+  geom_bar() +
+    labs(y="M4")+
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+```{r}
+ggplot(df_doctors_v20220321) +
+  aes(x = DocID, fill = M7, weight = M5) +
+  geom_bar() +
+  scale_fill_viridis_d(option = "viridis", direction = 1) +
+  labs(title = "M5") +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+## Patient dataset graphs
+```{r}
+ggplot(df_patients_v20220321) +
+  aes(x = "", y = P9, fill = P8) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  coord_flip() +
+  theme_minimal() +
+  facet_wrap(vars(DocID), scales = "free")
+```
+
+
+```{r}
+ggplot(df_patients_v20220321) +
+  aes(x = P9, fill = P8) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  facet_wrap(vars(DocID), scales = "free_x")
+```
+
+
+```{r}
+ggplot(df_patients_v20220321) +
+  aes(x = P5, fill = P8) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  facet_wrap(vars(DocID), scales = "free_x")
+```
+
+```{r}
+ggplot(df_patients_v20220321) +
+  aes(x = P6, fill = P8) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  facet_wrap(vars(DocID), scales = "free_x")
+```
+
+
+```{r}
+
+
+ggplot(df_patients_v20220321, aes(x=DocID, fill=P8)) +
+  geom_bar(position="fill") +
+  geom_text(
+    aes(label=signif(..count.. / tapply(..count.., ..x.., sum)[as.character(..x..)], digits=2)),
+    stat="count",
+    position=position_fill(vjust=0.5)) +
+  labs(y="Proportion")+
+  ggtitle("Proportion of patients status ICU discharge for each doctor  (A-alive, D-dead)")+
+  theme(legend.position="top")
+
+
+
+
+ggplot(df_patients_v20220321, aes(x= DocID,group=P8)) + 
+    geom_bar(aes(y = ..prop.., fill = factor(P8)), stat="count") +
+    geom_text(aes( label = scales::percent(..prop..), y= ..prop.. ), stat= "count", vjust = -.5) +
+    labs(y = "Percent", fill="Status") +
+    facet_grid(~P8) +
+    scale_y_continuous(labels = scales::percent)
+
+
+
+df_patients_v20220321 %>%
+  group_by(P8) %>%
+  ggplot(aes(y = forcats::fct_reorder(DocID, P9),
+             x = P9,
+             fill=P8,
+             label=scales::percent(P9)))+
+  geom_col(width=0.5)+
+  theme(legend.position="none")+
+  labs(y="",
+       x="P9")+
+  scale_x_continuous(labels = scales::percent,
+                     breaks = scales::pretty_breaks(n = 8))+
+  geom_text(nudge_x= -.01,
+            color="white",
+            size = 5,
+            fontface="bold")
+```
+
+```{r}
+ggplot(df_patients_v20220321, aes(x=DocID, fill=P10)) +
+  geom_bar(position="fill") +
+  geom_text(
+    aes(label=signif(..count.. / tapply(..count.., ..x.., sum)[as.character(..x..)], digits=2)),
+    stat="count",
+    position=position_fill(vjust=0.5)) +
+  labs(y="Proportion")+
+  ggtitle("Proportion of patients primary diagnosis for each doctor ")+
+  theme(legend.position="top")
+```
+
+```{r}
+ggplot(df_patients_v20220321, aes(x=DocID, fill=P1)) +
+  geom_bar(position="fill") +
+  geom_text(
+    aes(label=signif(..count.. / tapply(..count.., ..x.., sum)[as.character(..x..)], digits=2)),
+    stat="count",
+    position=position_fill(vjust=0.5)) +
+  labs(y="Proportion")+
+  ggtitle("Proportion of patients based on age, for each doctor ")+
+  theme(legend.position="top")
+```
+
+
+```{r}
+ ggplot(df_patients_v20220321, aes(x=DocID, fill=P7)) +
+  geom_bar(position="fill") +
+  geom_text(
+    aes(label=signif(..count.. / tapply(..count.., ..x.., sum)[as.character(..x..)], digits=2)),
+    stat="count",
+    position=position_fill(vjust=0.5)) +
+  labs(y="Proportion")+
+  ggtitle("Proportion of patients based on Sex, for each doctor ")+
+  theme(legend.position="top")
+```
+
+
+
+```{r}
+# library
+library(ggridges)
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+
+# Plot
+ggplot(df_patients_v20220321, aes(x = P6, y = DocID, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "SOFA score at admission", option = "C") +
+  labs(title = 'Doctor and patient SOFA score decission') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+```
+
+```{r}
+# Plot
+ggplot(df_patients_v20220321, aes(x = P5, y = DocID, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "SOFA score at admission", option = "C") +
+  labs(title = 'Doctor and patient APACHE II score decission') +
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+
+
+ggplot(df_patients_v20220321, aes(x = P5, y = DocID, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "SOFA score at admission", option = "C") +
+  labs(title = 'Doctor and patient APACHE II score decission') +
+  geom_vline(xintercept = mean(df_patients_v20220321$P5),color="red")+
+  theme_ipsum() +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+```
+
+```{r}
+# Plot
+ggplot(df_patients_v20220321, aes(x = P9, y = DocID, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "SOFA score at admission", option = "C") +
+  labs(title = 'Doctor and patient ICU length of stay') +
+  theme_ipsum() +
+  geom_vline(xintercept = mean(df_patients_v20220321$P9),color="red")+
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+```
+
+
+```{r}
+ggplot(df_patients_v20220321, aes(x = P9, y = DocID, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 5, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "SOFA score at admission", option = "C") +
+  labs(title = 'Doctor and patient ICU length of stay') +
+  theme_ipsum() +
+  geom_vline(xintercept = mean(df_patients_v20220321$P9),color="red")+
+    geom_vline(xintercept = quantile(df_patients_v20220321$P9),color="yellow")+
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.1, "lines"),
+      strip.text.x = element_text(size = 8)
+    )
+```
+
+## Patient dataset distance matrix
+We may say that it is visible that we have subsets of patients which have almost the same recordings.
+
+```{r}
+distance <- get_dist(df_patients_v20220321)
+fviz_dist(distance, gradient = list(low = "green", mid = "white", high = "red"))
+```
+
+
+# Explore library
+this library may be used to further investigate some decission trees for regression or classification in each of the dataset. Just keep in mind which is our target variable. 
+```{r}
+library(explore)
+# df_doctors_v20220321 %>% explore() # same logic should be used if you work with the other datasets
+```
+
+
+# Spearman correlation 
+Reference: https://statsandr.com/blog/correlation-coefficient-and-correlation-test-in-r/
+
+There are several correlation methods (Run ?cor for more information about the different methods available in the cor() function):
+
+- Pearson correlation is often used for quantitative continuous variables that have a linear relationship
+
+- Spearman correlation (which is actually similar to Pearson but based on the ranked values for each variable rather than on the raw data) is often used to evaluate relationships involving at least one qualitative ordinal variable or two quantitative variables if the link is partially linear
+
+-Kendall’s tau-b which is computed from the number of concordant and discordant pairs is often used for qualitative ordinal variables
+
+```{r}
+# Spearman correlation between 2 variables
+cor(df_doctors_v20220321$M4, df_doctors_v20220321$M5,method = "spearman")
+
+
+```
+
+## Variable Importance for Patient dataset
+LOS (Length of stay) at ICU is important for the performance of the physicians, also patient status discharge (alive) is important and SOFA score at admission is helping us to understand patient status.
+
+```{r}
+boruta_output <- Boruta(P6~., data=df_patients_v20220321[,-c(1,2)], doTrace=0)  
+boruta_signif <- getSelectedAttributes(boruta_output, withTentative = TRUE)
+print(boruta_signif) 
+```
+
+
+```{r}
+boruta_output <- Boruta(P9~., data=df_patients_v20220321[,-c(1,2)], doTrace=0)  
+boruta_signif <- getSelectedAttributes(boruta_output, withTentative = TRUE)
+print(boruta_signif) 
+```
+
+```{r}
+# Do a tentative rough fix
+roughFixMod <- TentativeRoughFix(boruta_output)
+boruta_signif <- getSelectedAttributes(roughFixMod)
+print(boruta_signif)
+```
+
+```{r}
+# Variable Importance Scores
+imps <- attStats(roughFixMod)
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+head(imps2[order(-imps2$meanImp), ])  # descending sort
+```
+
+```{r}
+# Plot variable importance
+plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  
+```
+## Random Forest model for patient dataset
+
+here we have considered as our target variable the length of stay (LOS) at ICU. (P9) and analysed which variables are of high importance for this variable.
+```{r}
+set.seed(0)
+model_rf <- ranger(P9~., data=df_patients_v20220321[,-c(1,2)], mtry = 2, num.trees = 500, write.forest=TRUE, importance = "permutation")
+```
+
+```{r}
+p2<-data.frame(variables = names(importance(model_rf, method = "janitza")),           feature_importance = importance(model_rf, method = "janitza")) %>%
+  ggplot(aes(x = feature_importance, y = reorder(variables, X = feature_importance))) +
+    geom_bar(stat = "identity",  alpha=0.9, fill="darkblue") +
+    labs(y = "features", title = "Feature importance") +
+    theme_minimal(base_size = 10)
+p2
+```
+There is no significant correlation between SOFA and number of days in ICU cor=-0.1498145
+```{r}
+plot(df_traj_v20220321$day,df_traj_v20220321$SOFA)
+cor(df_traj_v20220321$day,df_traj_v20220321$SOFA)
+```
+
+```{r}
+plot(df_patients_v20220321$P4, df_patients_v20220321$P5)
+cor(df_patients_v20220321[,c(6,7,8,11)])
+plot(df_patients_v20220321$P5, df_patients_v20220321$P6)
+
+```
+
+
+
+
+## Survey dataset data analysis
+
+```{r}
+distance <- get_dist(df_eval360_v20220321)
+fviz_dist(distance, gradient = list(low = "green", mid = "white", high = "red"))
+```
+
+## Variable importance for Q23 in the evaluation dataset.
+
+Since Q23 is the overall average we used it as our target variable. 
+```{r}
+boruta_output <- Boruta(Q23~., data=na.omit(df_eval360_v20220321[,-24]), doTrace=0)  
+boruta_signif <- getSelectedAttributes(boruta_output, withTentative = TRUE)
+print(boruta_signif) 
+```
+
+```{r}
+# Do a tentative rough fix
+roughFixMod <- TentativeRoughFix(boruta_output)
+boruta_signif <- getSelectedAttributes(roughFixMod)
+print(boruta_signif)
+```
+
+```{r}
+# Variable Importance Scores
+imps <- attStats(roughFixMod)
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+head(imps2[order(-imps2$meanImp), ])  # descending sort
+```
+
+```{r}
+# Plot variable importance
+plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  
+```
+# Random Forest
+
+```{r}
+set.seed(0)
+model_rf <- ranger(Q23~., data=na.omit(df_eval360_v20220321[,-24]), mtry = 2, num.trees = 500, write.forest=TRUE, importance = "permutation")
+```
+
+```{r}
+p3<-data.frame(variables = names(importance(model_rf, method = "janitza")),           feature_importance = importance(model_rf, method = "janitza")) %>%
+  ggplot(aes(x = feature_importance, y = reorder(variables, X = feature_importance))) +
+    geom_bar(stat = "identity",  alpha=0.9, fill="darkblue") +
+    labs(y = "features", title = "Feature importance") +
+    theme_minimal(base_size = 10)
+p3
+```
+
+# Variable Importance (RF) all dataset
+
+```{r}
+multiplot(p1, p2, p3, cols=3)
+```
+
+
+# Adding new variables to  evaluation dataset
+
+First let add a variable (average) which will be the mean of Q1-Q22 evaluations. And then we will compare this average with the average score given at Q23. Variable (diff) will be the difference between average and Q23. If this diff is >= 0 then evaluation is reasonable. Otherwise , if diff<0 it means that based on Q1-Q22 they have over estimated the doctor and have given to him/her a score above the mean. In any case +- 1 is not  "a big deal".
+
+```{r}
+df_eval360_v20220321<-df_eval360_v20220321 %>% mutate(average=rowMeans(df_eval360_v20220321[,1:22],na.rm = T))
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+df_eval360_v20220321<-df_eval360_v20220321 %>% mutate(diff=df_eval360_v20220321$average-df_eval360_v20220321$Q23)
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+```
+Look at the distrubution of average and Q23. It looks that there is no correlation between the Q23 and the Q1-Q22 evaluation.
+```{r}
+plot(df_eval360_v20220321$Q23,df_eval360_v20220321$average)
+plot(df_eval360_v20220321$diff)
+```
+
+
+Now lets create variables based on three main categories used for evaluation:
+Q1-Q9 related to Expert, professionalism etc.
+Q10-Q18 Communication and collaboration
+Q19-Q22 Management
+
+Again here we will use the average . We are interested on doctors with evaluation performance: 4 (top half), 5 (among best).
+
+```{r}
+df_eval360_v20220321<-df_eval360_v20220321 %>% mutate(ave.Q1_Q9=rowMeans(df_eval360_v20220321[,1:9],na.rm = T))
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+
+df_eval360_v20220321<-df_eval360_v20220321 %>% mutate(ave.Q10_Q18=rowMeans(df_eval360_v20220321[,10:18],na.rm = T))
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+
+
+df_eval360_v20220321<-df_eval360_v20220321 %>% mutate(ave.Q19_Q22=rowMeans(df_eval360_v20220321[,19:22],na.rm = T))
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+```
+
+Let us create some graphs understanding the performance of the doctors in evaluation dataset.
+```{r}
+ggplot(df_eval360_v20220321) +
+  aes(x = DocID, y = Q23, fill = DocID) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+
+
+ggplot(df_eval360_v20220321) +
+  aes(x = DocID, y = ave.Q1_Q9, fill = DocID) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+
+ggplot(df_eval360_v20220321) +
+  aes(x = DocID, y = ave.Q10_Q18, fill = DocID) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+
+
+ggplot(df_eval360_v20220321) +
+  aes(x = DocID, y = ave.Q19_Q22, fill = DocID) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+
+
+ggplot(df_eval360_v20220321) +
+  aes(x = DocID, y = average, fill = DocID) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+```
+
+
+
+```{r}
+df_eval360_v20220321 %>% 
+  filter(ave.Q1_Q9 >=4,ave.Q10_Q18 >=4, ave.Q19_Q22>=4)%>%
+  ggplot() +
+  aes(x = DocID, y = average, fill = DocID) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+```
+
+
+```{r}
+df_eval360_v20220321 %>% 
+  filter(Q23>=4)%>%
+ggplot() +
+  aes(x = DocID, weight = Q23) +
+  geom_bar(fill = "#112446") +
+  theme_minimal()
+
+```
+
+## Measuring the physician performance (Top approach)
+
+After observing the plot distributions and performance we are creating a new variable (Performance=0 bad , =1 good) which will be based in average Q1_Q9, average Q10-Q18, average Q19_Q22 to be greater than 3 (for 4, we had only two doctors 13 and 15) and abs(diff)<1.
+
+
+```{r}
+df_eval360_v20220321<-df_eval360_v20220321 %>% 
+  mutate(Performance_1 = ifelse(ave.Q1_Q9>=3 & ave.Q10_Q18>=3 & ave.Q19_Q22>=3 & abs(diff)<=1,1,0))
+
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+```
+
+
+If we want some descriptive statistics by group variable we can use:
+
+```{r}
+library(psych)
+
+describeBy(df_eval360_v20220321, group=df_eval360_v20220321$Performance_1, fast=TRUE)
+
+
+describeBy(df_eval360_v20220321, group=df_eval360_v20220321$DocID, fast=TRUE)
+
+```
+
+Performance evaluation of doctors from survey, we are looking at those physicians where the performance is greater than or equal to a given percentage. We remind that we are using the "top physicians" approach here.
+```{r}
+# for performance measure 1
+library(dplyr)
+Performance_survey<-df_eval360_v20220321 %>% 
+  group_by(DocID) %>%
+  summarize(Good=sum(Performance_1==1,na.rm = T),Not_Good=sum(Performance_1==0,na.rm=T))
+
+Performance_survey
+
+Percentage_performance<-Performance_survey %>% 
+  mutate(Percentage_Good=round(100*Performance_survey$Good/(Performance_survey$Good+Performance_survey$Not_Good),0))
+Percentage_performance # based on survey scores
+
+```
+
+Which doctors (DocID are printed out) have performance percentage based on survey greater than 70%, 75%, 80% and 85%?.
+
+```{r}
+# for performance measure 1
+which(Percentage_performance$Percentage_Good>=70)
+which(Percentage_performance$Percentage_Good>=75)
+which(Percentage_performance$Percentage_Good>=80)
+which(Percentage_performance$Percentage_Good>=85)
+
+```
+
+Another approach we can use for the performance measure is:
+ consider separately Q23 and average of previous questions Q1-Q22
+```{r}
+df_eval360_v20220321<-df_eval360_v20220321 %>% 
+  mutate(Performance_2 = ifelse(ave.Q1_Q9>=3 & ave.Q10_Q18>=3 & ave.Q19_Q22>=3 & average>=4 & Q23>=4,1,0))
+
+head(df_eval360_v20220321)
+#View(df_eval360_v20220321)
+
+```
+
+
+```{r}
+# for performance measure 1
+library(dplyr)
+Performance_survey<-df_eval360_v20220321 %>% 
+  group_by(DocID) %>%
+ dplyr::summarize(Good=sum(Performance_2==1,na.rm = T),Not_Good=sum(Performance_2==0,na.rm=T))
+
+Performance_survey
+
+Percentage_performance<-Performance_survey %>% 
+  mutate(Percentage_Good=round(100*Performance_survey$Good/(Performance_survey$Good+Performance_survey$Not_Good),0))
+Percentage_performance # based on survey scores
+```
+
+```{r}
+# for performance measure 2
+which(Percentage_performance$Percentage_Good>=70)
+which(Percentage_performance$Percentage_Good>=75)
+which(Percentage_performance$Percentage_Good>=77)
+which(Percentage_performance$Percentage_Good>=76)
+which(Percentage_performance$Percentage_Good>=80)
+which(Percentage_performance$Percentage_Good>=85)
+
+```
+
+
+# Physician dataset
+
+Now we will work with doctor dataframe. 
+we will add available Performance based on M4 and M5. 
+
+```{r}
+i=which(df_doctors_v20220321$M5>=2) # which doctors have M5 greater than or equal to 2
+i
+
+fivenum(df_doctors_v20220321$M4) # observe the min, max and quartiles to decide on the level of M4 to consider for top doctors
+i=which(df_doctors_v20220321$M4>=5) # which doctors have M4 greater then or equal to 5  (5 is close to 3rd quartile, so we are considering here almost 25% of physicians classified in top positions)
+i
+```
+
+The performance (Remind: Top physician approach. We are interested in Top physicians.)
+
+```{r}
+df_doctors_v20220321<-df_doctors_v20220321 %>% 
+  mutate(Performance = ifelse(M4>=5 & M5>=2,1,0))
+
+head(df_doctors_v20220321)
+#View(df_doctors_v20220321)
+
+which(df_doctors_v20220321$Performance==1)
+# [1]  6  7 13 15 21 23 25
+```
+
+
+```{r}
+df_doctors_v20220321<-df_doctors_v20220321 %>% 
+  mutate(Performance = ifelse(M4>=5 & M5>=2,1,0))
+
+head(df_doctors_v20220321)
+#View(df_doctors_v20220321)
+
+which(df_doctors_v20220321$Performance==1)
+# [1]  6  7 13 15 21 23 25
+```
+
+
+# Performance from Patiend df
+
+# Patient dataset
+
+Here we consider ICU stay [2,10] since the first days are expensive , a doctor should not put a patient in ICU if there is no necessity.  AND, if SOFA is >10 (which tells us that the mortality rate is >40%) AND if the patient were removed Alive from ICU, then this doctor may be considered among the top doctors (Remind: Top physician approach).
+Lets Create a Performance measure.
+
+Some references: 
+Sofa score reference: https://jamanetwork.com/journals/jama/fullarticle/194262
+Sofa score greater tan 7 means mortality higher than 20%. 
+https://clincalc.com/IcuMortality/SOFA.aspx
+
+ICU stay length: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4792682/
+ICU stay and financial cost: https://www.sciencedirect.com/science/article/pii/S2212109919306156
+
+
+```{r}
+df_patients_v20220321 %>%
+  ggplot(.) +
+  aes(x = DocID, y = P6, fill = P8) +
+  geom_violin(adjust = 2L, scale = "area") +
+  geom_jitter() +
+  scale_fill_manual(values = c(A = "#02A907", D = "#EF3A0A")) +
+  hrbrthemes::theme_ipsum_ps() +
+  theme(legend.position = "top")
+```
+
+```{r}
+df_patients_v20220321 %>%
+  ggplot(.) +
+  aes(x = DocID, y = P6, fill = P8) +
+  geom_boxplot() +
+  geom_jitter() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+```{r}
+df_patients_v20220321 %>%
+  ggplot(.) +
+  aes(x = DocID, y = P6, fill = P8) +
+  geom_boxplot() +
+    scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+
+```{r}
+p1<-df_patients_v20220321 %>%
+  ggplot() +
+  aes(x = P9, fill = DocID) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+p1
+```
+
+
+```{r}
+p2<-df_patients_v20220321 %>%
+  ggplot() +
+  aes(x = P6, fill = DocID) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+p2
+```
+
+```{r}
+p3<-df_patients_v20220321 %>%
+  ggplot() +
+  aes(x = P5, fill = DocID) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+p3
+```
+
+```{r}
+multiplot(p1, p2, p3, cols=3)
+```
+
+
+```{r}
+df_patients_v20220321 %>%
+  ggplot() +
+  aes(x = P4, fill = DocID) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r}
+df_patients_v20220321 %>%
+  ggplot() +
+  aes(x = P9, fill = DocID) +
+  geom_density(adjust = 1L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+hist(df_patients_v20220321$P9)
+fivenum(df_patients_v20220321$P9)# 50 percent of patient stayed at ICU  less than or equal to 5 days
+```
+## Performance measure from patient dataset
+Here we are creating a performance measure based on P6, P8 and P9 variables and conditions from the above results. 
+
+```{r}
+df_patients_v20220321<-df_patients_v20220321 %>% 
+  mutate(Performance=ifelse(P6>=6 & P8=="A" & P9<=5,1,0))
+
+head(df_patients_v20220321)
+#View(df_patients_v20220321)
+
+```
+
+
+```{r}
+# for performance measure 1
+
+Performance_survey<-df_patients_v20220321 %>% group_by(DocID) %>% dplyr::summarize(Good=sum(Performance==1),Not_Good=sum(Performance==0))
+
+Performance_survey
+
+Percentage_performance<-Performance_survey %>% 
+  mutate(Percentage_Good=round(100*Performance_survey$Good/(Performance_survey$Good+Performance_survey$Not_Good),0))
+Percentage_performance # based on patient dataframe
+```
+
+Which doctors (DocID) have performance greater than 40%, 38%, 35% and 30%?
+```{r}
+# for performance measure 2
+which(Percentage_performance$Percentage_Good>=40)
+which(Percentage_performance$Percentage_Good>=38)
+which(Percentage_performance$Percentage_Good>=35)
+which(Percentage_performance$Percentage_Good>=30)
+
+```
+Let us change ICU stay (P9) greater than 9 days.(based on the quarters)
+
+ICU stay <= 9 days (75% of patients)
+```{r}
+df_patients_v20220321<-df_patients_v20220321 %>% 
+  mutate(Performance_3=ifelse(P6>=6 & P8=="A" & P9<=9,1,0))
+
+head(df_patients_v20220321)
+#View(df_patients_v20220321)
+```
+
+Let's see the performance measure now.
+
+```{r}
+# for performance measure 1
+
+Performance_survey<-df_patients_v20220321 %>% group_by(DocID) %>% dplyr::summarize(Good=sum(Performance_3==1),Not_Good=sum(Performance_3==0))
+
+Performance_survey
+
+Percentage_performance<-Performance_survey %>% 
+  mutate(Percentage_Good=round(100*Performance_survey$Good/(Performance_survey$Good+Performance_survey$Not_Good),0))
+Percentage_performance # based on patient dataframe
+```
+
+Which doctors (DocID) have performance greater than or eauql to 45%, 40%, 38%, 35% and 30%?
+```{r}
+# for performance measure 2
+which(Percentage_performance$Percentage_Good>=45)
+
+which(Percentage_performance$Percentage_Good>=40)
+which(Percentage_performance$Percentage_Good>=38)
+which(Percentage_performance$Percentage_Good>=35)
+which(Percentage_performance$Percentage_Good>=30)
+
+```
+# Extra analysis 
+This extra analysis helped us to understand the dataset and the variables correlations, physicians clusters and more.
+
+Libraries used:
+```{r}
+library(tidyverse)  # data manipulation
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+```
+
+Let's see the doctors which have similar behaviour (measured with a distance matrix).
+```{r}
+distance <- get_dist(df_doctors_v20220321)
+distance
+fviz_dist(distance, gradient = list(low = "green", mid = "white", high = "red"))
+
+```
+
+
+
+## Hierarchial clustering for doctors dataset
+
+```{r}
+d <- dist(df_doctors_v20220321[,-10], method = "euclidean")
+
+# Ward's method
+hc4 <- hclust(d, method = "ward.D2" )
+
+# Cut tree into 4 groups
+sub_grp <- cutree(hc4, k = 3)
+
+# Number of members in each cluster
+table(sub_grp)
+
+plot(hc4, cex = 0.6)
+rect.hclust(hc4, k = 3, border = 2:4)
+
+plot(hc4, cex = 0.6)
+rect.hclust(hc4, k = 5, border = 2:5)
+sub_grp <- cutree(hc4, k = 5)
+table(sub_grp)
+sub_grp
+
+plot(hc4, cex = 0.6)
+rect.hclust(hc4, k = 3, border = 2:4)
+sub_grp <- cutree(hc4, k = 3)
+table(sub_grp)
+sub_grp
+```
+We observe three clear clusters in which the doctors may be organized. This is our second approach we will think of. three levels of physician performance classification (low-medium-High performance).
+```{r}
+d <- dist(df_eval360_v20220321[,c(23,26,28,29,30)], method = "euclidean")
+
+# Ward's method
+hc4 <- hclust(d, method = "ward.D2" )
+plot(hc4, cex = 0.6)
+rect.hclust(hc4, k = 3, border = 2:4)
+sub_grp <- cutree(hc4, k = 3)
+table(sub_grp)
+sub_grp
+```
+
+# Correlation graphs
+Correlation graphs based on P8 as a factor variable.
+
+```{r}
+library(GGally)
+ggpairs(df_patients_v20220321[,c(6,7,8,10,11)], ggplot2::aes(colour=P8)) 
+```
+Correlation graphs based on P7 as a factor variable.
+```{r}
+ggpairs(df_patients_v20220321[,c(6,7,8,9,11)], ggplot2::aes(colour=P7)) 
+```
+Correlation graphs based on P1 as a factor variable.
+
+```{r}
+ggpairs(df_patients_v20220321[,c(3,6,7,8,11)], ggplot2::aes(colour=P1))
+```
+
+
+### Spearman correlation betweeen Q1-Q23 questions
+
+Correlation expresses the extent to which two variables are related to each other.Features with high correlation are more linearly dependent and hence have almost the same effect on the dependent variable. Therefore, when two features have high correlation, we can drop one of them. 
+```{r}
+library(corrplot)
+M=round(cor(na.omit(df_eval360_v20220321[,-c(24:32)]),method = "spearman"),2)# roudn to 2 decimal figures
+
+M
+corrplot(cor(na.omit(df_eval360_v20220321[,-c(24:32)]),method = "spearman"), method = "number",type = "upper") # show only upper side
+corrplot(cor(df_eval360_v20220321[,-c(24:32)],method = "spearman"), method = "number",type = "upper") # show only upper side
+corrplot(cor(df_eval360_v20220321[,-c(24:32)],method = "spearman"), method = "number",type = "upper") # show only upper side
+
+```
+
+```{r}
+M=round(cor(na.omit(df_eval360_v20220321[,c(23,26,28:30)]),method = "spearman"),2)# roudn to 2 decimal figures
+
+corrplot(cor(na.omit(df_eval360_v20220321[,c(23,26,28:30)]),method = "spearman"), method = "number",type = "upper") # show only upper side
+```
+
+```{r}
+library(GGally)
+g1<-ggcorr(na.omit(df_eval360_v20220321[,c(23,26,28:30)]), nbreaks = 4, palette = "RdGy", label = TRUE, label_size = 3, label_color = "white")
+g1
+```
+
+```{r}
+g2<-ggcorr(na.omit(df_patients_v20220321[,c(6:8,11)]), nbreaks = 4, palette = "RdGy", label = TRUE, label_size = 3, label_color = "white")
+g2
+```
+```{r}
+multiplot(g1,g2,cols=2)
+```
+
